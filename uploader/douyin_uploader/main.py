@@ -49,6 +49,7 @@ def _build_login_result(success: bool, status: str, message: str, account_file: 
 
 
 async def cookie_auth(account_file):
+    """这是一个“探针”函数。它加载保存的 Cookie，尝试访问抖音上传页面。如果被重定向到登录页，说明 Cookie 已失效。"""
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True, channel="chrome")
         try:
@@ -70,6 +71,7 @@ async def cookie_auth(account_file):
 
 
 async def douyin_setup(account_file, handle=False, return_detail=False, qrcode_callback=None, headless: bool = LOCAL_CHROME_HEADLESS):
+    """登录入口函数。它决定是直接使用旧 Cookie 还是调用 douyin_cookie_gen 重新生成。"""
     if not os.path.exists(account_file) or not await cookie_auth(account_file):
         if not handle:
             result = _build_login_result(False, "cookie_invalid", "cookie文件不存在或已失效", account_file)
@@ -175,6 +177,12 @@ async def douyin_cookie_gen(
     max_checks: int = 100,
     headless: bool = LOCAL_CHROME_HEADLESS,
 ):
+    """
+启动浏览器并访问抖音。
+调用 _save_douyin_qrcode 获取二维码。
+进入 _wait_for_douyin_login 循环，持续检测页面是否跳转到首页或发布页，直到用户扫码成功。
+扫码成功后，通过 context.storage_state 将最新的登录状态保存到本地文件。
+    """
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=headless, channel="chrome")
         context = await browser.new_context()
@@ -237,6 +245,7 @@ class DouYinBaseUploader(BaseVideoUploader):
         self.headless = headless
 
     async def validate_base_args(self):
+        """校验发布策略（立即/定时）和发布时间的合法性。"""
         if not os.path.exists(self.account_file):
             raise RuntimeError(f"cookie文件不存在，请先完成抖音登录: {self.account_file}")
         if not await cookie_auth(self.account_file):
@@ -250,6 +259,7 @@ class DouYinBaseUploader(BaseVideoUploader):
             self.publish_date = 0
 
     async def set_schedule_time_douyin(self, page, publish_date):
+        """自动化操作日期选择器。它通过模拟键盘输入 Control+A 和 Enter 来精准设置定时发布的时间。"""
         label_element = page.locator("[class^='radio']:has-text('定时发布')")
         await label_element.click()
         await asyncio.sleep(1)
@@ -263,6 +273,7 @@ class DouYinBaseUploader(BaseVideoUploader):
         await asyncio.sleep(1)
 
     async def fill_title_and_description(self, page: Page, title: str, description: str, tags: list[str] | None = None):
+        """在内容输入框中填写标题，并利用模拟键盘输入的方式添加 #话题，这能触发抖音的标签联想功能，更符合真人操作。"""
         description_section = (
             page.get_by_text("作品描述", exact=True)
             .locator("xpath=ancestor::div[2]")
@@ -285,6 +296,7 @@ class DouYinBaseUploader(BaseVideoUploader):
             await page.keyboard.press("Space")
 
     async def set_location(self, page: Page, location: str = ""):
+        """搜索并选择地理位置。"""
         if not location:
             return
         await page.locator('div.semi-select span:has-text("输入地理位置")').click()
@@ -324,6 +336,7 @@ class DouYinBaseUploader(BaseVideoUploader):
         return False
 
     async def set_product_link(self, page: Page, product_link: str, product_title: str):
+        """实现了电商功能。它能选择“购物车”标签，粘贴商品链接，并调用 handle_product_dialog 处理商品标题编辑弹窗。"""
         await page.wait_for_timeout(2000)
         try:
             await page.wait_for_selector("text=添加标签", timeout=10000)
@@ -413,10 +426,12 @@ class DouYinVideo(DouYinBaseUploader):
             self.thumbnail_portrait_path = str(self.validate_image_file(self.thumbnail_portrait_path))
 
     async def handle_upload_error(self, page):
+        """如果视频上传失败，会尝试重新触发上传。"""
         douyin_logger.warning(_msg("😵", "视频上传摔了一跤，小人马上重新上传"))
         await page.locator('div.progress-div [class^="upload-btn-input"]').set_input_files(self.file_path)
 
     async def handle_auto_video_cover(self, page):
+        """如果用户没提供封面，它会智能点击抖音推荐的封面，防止因为没封面而无法发布。"""
         if await page.get_by_text("请设置封面后再发布").first.is_visible():
             douyin_logger.info(_msg("🧍", "发布前还得先把封面弄好"))
             recommend_cover = page.locator('[class^="recommendCover-"]').first
@@ -438,6 +453,7 @@ class DouYinVideo(DouYinBaseUploader):
         return False
 
     async def set_thumbnail(self, page: Page):
+        """它不仅支持普通的封面选择，还支持分别上传横版和竖版自定义封面。"""
         if not self.thumbnail_landscape_path and not self.thumbnail_portrait_path:
             return
 
