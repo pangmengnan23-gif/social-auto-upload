@@ -55,13 +55,13 @@ uv pip install -e .
 Windows PowerShell：
 
 ```powershell
-$env:PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright"; patchright install chromium
+$env:PLAYWRIGHT_DOWNLOAD_HOST="https://playwright.azureedge.net" patchright install chromium
 ```
 
 Linux / macOS：
 
 ```bash
-PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright" patchright install chromium
+PLAYWRIGHT_DOWNLOAD_HOST=https://playwright.azureedge.net patchright install chromium
 ```
 
 ### 5. 配置 conf.py
