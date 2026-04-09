@@ -117,11 +117,7 @@ async def _save_ks_qrcode(page: Page, account_file: str, previous_qrcode_path: P
 
     kuaishou_logger.info(_msg("🖼️", f"二维码已经准备好啦，已保存到: {qrcode_path}"))
     qrcode_content = decode_qrcode_from_path(qrcode_path)
-    if qrcode_content:
-        _print_ks_qrcode(qrcode_content, qrcode_path)
-    else:
-        kuaishou_logger.warning(_msg("😵", f"终端没法完整显示二维码，请打开 {qrcode_path} 扫码"))
-
+    _print_ks_qrcode(qrcode_content, qrcode_path)
     qrcode_info = {
         "image_path": str(qrcode_path),
         "image_data_url": qrcode_src,

@@ -118,11 +118,7 @@ async def _save_xhs_qrcode(
 
     xiaohongshu_logger.info(_msg("🖼️", f"二维码已经准备好啦，已保存到: {qrcode_path}"))
     qrcode_content = decode_qrcode_from_path(qrcode_path)
-    if qrcode_content:
-        print_terminal_qrcode(qrcode_content, qrcode_path, "小红书APP")
-    else:
-        xiaohongshu_logger.warning(_msg("😵", f"终端没法完整显示二维码，请打开 {qrcode_path} 扫码"))
-
+    print_terminal_qrcode(qrcode_content, qrcode_path, "小红书APP")
     qrcode_info = {
         "image_path": str(qrcode_path),
         "image_data_url": qrcode_src,
