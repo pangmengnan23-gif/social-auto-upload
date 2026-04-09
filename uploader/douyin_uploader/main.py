@@ -107,6 +107,29 @@ async def _extract_douyin_qrcode_src(page: Page) -> str:
     return src
 
 
+async def _extract_visible_qrcode_src(page: Page) -> str | None:
+    candidates = [
+        page.locator('[role="dialog"] img[aria-label="二维码"]').first,
+        page.get_by_role("img", name="二维码").first,
+        page.locator('[role="dialog"] img[src^="data:image/"]').first,
+        page.locator('img[src^="data:image/"]').first,
+    ]
+
+    for candidate in candidates:
+        try:
+            if not await candidate.count():
+                continue
+            if not await candidate.is_visible():
+                continue
+            src = await candidate.get_attribute("src")
+            if src and src.startswith("data:image/"):
+                return src
+        except Exception:
+            continue
+
+    return None
+
+
 async def _save_douyin_qrcode(page: Page, account_file: str, previous_qrcode_path: Path | None = None, qrcode_callback=None) -> dict:
     qrcode_src = await _extract_douyin_qrcode_src(page)
     qrcode_path = save_data_url_image(qrcode_src, build_login_qrcode_path(account_file))
@@ -125,6 +148,118 @@ async def _save_douyin_qrcode(page: Page, account_file: str, previous_qrcode_pat
     }
     await _emit_qrcode_callback(qrcode_callback, qrcode_info)
     return qrcode_info
+
+
+async def _save_douyin_verification_qrcode(
+    page: Page,
+    account_file: str,
+    previous_qrcode_path: Path | None = None,
+    qrcode_callback=None,
+) -> dict:
+    qrcode_src = await _extract_visible_qrcode_src(page)
+    if not qrcode_src:
+        raise RuntimeError("未获取到抖音手机刷脸验证二维码地址")
+
+    qrcode_path = save_data_url_image(
+        qrcode_src,
+        build_login_qrcode_path(account_file, suffix="face_verify_qrcode"),
+    )
+    if previous_qrcode_path and previous_qrcode_path != qrcode_path:
+        if remove_qrcode_file(previous_qrcode_path):
+            douyin_logger.info(_msg("🧹", f"临时二维码文件已清理: {previous_qrcode_path}"))
+
+    douyin_logger.info(_msg("🖼️", f"手机刷脸验证二维码已经准备好，已保存到: {qrcode_path}"))
+    qrcode_content = decode_qrcode_from_path(qrcode_path)
+    if qrcode_content:
+        print()
+        print("请使用手机扫码刷脸验证：")
+        print_terminal_qrcode(qrcode_content, qrcode_path, "抖音APP")
+    else:
+        douyin_logger.warning(_msg("😵", f"终端没法完整显示手机刷脸验证二维码，请打开 {qrcode_path} 扫码"))
+
+    qrcode_info = {
+        "image_path": str(qrcode_path),
+        "image_data_url": qrcode_src,
+        "step": "face_verify",
+    }
+    await _emit_qrcode_callback(qrcode_callback, qrcode_info)
+    return qrcode_info
+
+
+async def _click_first_visible(locator) -> bool:
+    try:
+        if not await locator.count():
+            return False
+        if not await locator.is_visible():
+            return False
+        await locator.click()
+        return True
+    except Exception:
+        return False
+
+
+async def _find_douyin_secondary_verification_page(page: Page) -> Page | None:
+    for candidate_page in reversed(page.context.pages):
+        try:
+            verification_dialog = candidate_page.get_by_text("身份验证", exact=True).first
+            phone_face_entry = candidate_page.get_by_text("手机刷脸验证", exact=True).first
+            if await verification_dialog.count() and await verification_dialog.is_visible():
+                return candidate_page
+            if await phone_face_entry.count() and await phone_face_entry.is_visible():
+                return candidate_page
+        except Exception:
+            continue
+    return None
+
+
+async def _handle_douyin_secondary_verification(
+    page: Page,
+    account_file: str,
+    qrcode_info: dict,
+    qrcode_callback=None,
+) -> tuple[dict, bool]:
+    verification_page = await _find_douyin_secondary_verification_page(page)
+    if verification_page is None:
+        return qrcode_info, False
+
+    verification_dialog = verification_page.get_by_text("身份验证", exact=True).first
+    phone_face_entry = verification_page.get_by_text("手机刷脸验证", exact=True).first
+
+    dialog_visible = False
+    entry_visible = False
+    try:
+        dialog_visible = await verification_dialog.count() and await verification_dialog.is_visible()
+    except Exception:
+        dialog_visible = False
+    try:
+        entry_visible = await phone_face_entry.count() and await phone_face_entry.is_visible()
+    except Exception:
+        entry_visible = False
+
+    if not dialog_visible and not entry_visible:
+        return qrcode_info, False
+
+    if qrcode_info.get("step") != "face_verify":
+        douyin_logger.info(_msg("🛂", "检测到“身份验证”弹窗，准备切换到“手机刷脸验证”"))
+
+    if entry_visible:
+        clicked = await _click_first_visible(phone_face_entry)
+        if clicked:
+            await asyncio.sleep(1.5)
+            face_qrcode_info = await _save_douyin_verification_qrcode(
+                verification_page,
+                account_file,
+                Path(qrcode_info["image_path"]),
+                qrcode_callback=qrcode_callback,
+            )
+            return face_qrcode_info, True
+
+    if qrcode_info.get("step") == "face_verify":
+        return qrcode_info, True
+
+    pending_qrcode_info = dict(qrcode_info)
+    pending_qrcode_info["step"] = "face_verify_pending"
+    return pending_qrcode_info, True
 
 
 async def _is_douyin_login_completed(page: Page) -> bool:
@@ -156,6 +291,17 @@ async def _wait_for_douyin_login(page: Page, account_file: str, qrcode_info: dic
         if await _is_douyin_login_completed(page):
             douyin_logger.info(_msg("🥳", f"扫码成功，已经跳转到登录后页面: {page.url}"))
             return _build_login_result(True, "success", "抖音扫码登录成功", account_file, qrcode_info, page.url)
+
+        qrcode_info, handled_secondary_verification = await _handle_douyin_secondary_verification(
+            page,
+            account_file,
+            qrcode_info,
+            qrcode_callback=qrcode_callback,
+        )
+        if handled_secondary_verification:
+            qrcode_path = Path(qrcode_info["image_path"])
+            await asyncio.sleep(poll_interval)
+            continue
 
         expired_box = page.get_by_text("二维码失效", exact=True).locator("..").first
         if await expired_box.count() and await expired_box.is_visible():
@@ -203,6 +349,8 @@ async def douyin_cookie_gen(
                 poll_interval=poll_interval,
                 max_checks=max_checks,
             )
+            if result.get("qrcode", {}).get("image_path"):
+                qrcode_path = Path(result["qrcode"]["image_path"])
             if result["success"]:
                 await asyncio.sleep(2)
                 await context.storage_state(path=account_file)
