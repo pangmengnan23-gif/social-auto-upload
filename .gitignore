@@ -189,3 +189,10 @@ uploadFile
 videoFile
 
 /uploader/bilibili_uploader/qrcode.png
+
+# 虚拟环境
+/social_auto_upload.egg-info
+
+/cookies
+
+/conf.py
